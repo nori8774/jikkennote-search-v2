@@ -1,0 +1,56 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+env.yaml
+
+# Firebase credentials (DO NOT COMMIT)
+backend/firebase-adminsdk.json
+firebase-adminsdk.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Node.js
+node_modules/
+.next/
+out/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Vercel
+.vercel/
+
+# ChromaDB (local data)
+backend/chroma_db/
+backend/teams/
+
+# Logs
+*.log
+logs/
+
+# Test
+.playwright/
+playwright-report/
+test-results/
+
+# User data
+Notes/
+
+# Misc
+*.bak
+*.tmp
+*.xlsx

@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# データファイル（デプロイ時は空の状態から開始）
+chroma_db/
+notes/
+data/
+
+# 環境変数
+.env
+.env.local
+
+# その他
+*.log
+.DS_Store

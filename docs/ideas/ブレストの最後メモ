@@ -1,0 +1,40 @@
+ v1機能追加のブレストから永続ドキュメントへの展開が全て完了しました。
+
+  ✅ 作成したドキュメント
+
+  1. アーカイブ
+
+  - docs/ideas/brainstorm-v1-features-2025-12-29.md
+    - 今回のブレスト会話の完全な記録
+    - 各機能の背景・課題・要件を詳細に記載
+  - docs/ideas/v1-improvements.md
+    - v1改善点の圧縮サマリー
+    - 実装時のクイックリファレンス
+
+  2. 永続ドキュメント（全てv3.0に更新）
+
+  - docs/product-requirements.md (v3.0.0)
+    - FR-109〜FR-115の新機能要件を追加
+    - マルチテナント、ノート取り込み改善、モデル2段階選択など
+  - docs/functional-design.md (v3.0.0)
+    - v3.0新機能の詳細設計セクションを追加
+    - 認証フロー、Sudachi + LLM辞書抽出、CSV出力実装など
+  - docs/architecture.md (v3.0.0)
+    - Firebase Authentication、Sudachiの技術仕様を追加
+    - モデル2段階選択、チームデータ分離の実装詳細
+  - docs/api-specification.md (v3.0.0)
+    - 新規APIエンドポイント追加（/ingest/upload、/teams/*）
+    - 認証ヘッダー、モデル選択パラメータの追記
+  - docs/repository-structure.md (v3.0.0)
+    - マルチテナント対応のディレクトリ構造を追加
+    - teams/{team_id}/配下の詳細説明
+
+  📋 v3.0の主要機能まとめ
+
+  1. マルチテナント対応（Firebase Googleログイン、チーム管理）
+  2. ノート取り込み改善（ローカル/GDrive、Sudachi + LLM）
+  3. 検索機能強化（再検索、モデル2段階選択、GPT-5系対応）
+  4. コピー機能（ビューワー一括コピー、検索画面4ボタン）
+  5. 評価機能改善（CSV出力、履歴50件）
+
+  全てのドキュメントが連携し、実装に必要な情報が揃っています！

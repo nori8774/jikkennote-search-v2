@@ -1,0 +1,25 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: jikkennote-backend
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/maxScale: '10'
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 600
+      containers:
+      - image: asia-northeast1-docker.pkg.dev/jikkennote-search/jikkennote-repo/backend:latest
+        resources:
+          limits:
+            cpu: '2'
+            memory: 2Gi
+        env:
+        - name: STORAGE_TYPE
+          value: gcs
+        - name: GCS_BUCKET_NAME
+          value: jikkennote-storage
+        - name: CORS_ORIGINS
+          value: "http://localhost:3000,https://jikkennote-search-v1.vercel.app"
