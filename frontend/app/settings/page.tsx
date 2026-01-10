@@ -820,11 +820,11 @@ export default function SettingsPage() {
                 </p>
               </div>
 
-              {/* 検索設定セクション（v3.0.1） */}
+              {/* 検索設定セクション（v3.0.1、v3.2.2: ハイブリッド重み設定削除） */}
               <div className="border-t border-gray-300 pt-6 mt-6">
                 <h3 className="text-lg font-bold mb-4">検索設定</h3>
 
-                <div className="mb-4">
+                <div>
                   <label className="block text-sm font-medium mb-2">デフォルト検索モード</label>
                   <select
                     className="w-full border border-gray-300 rounded-md p-3"
@@ -837,28 +837,7 @@ export default function SettingsPage() {
                   </select>
                   <p className="text-sm text-gray-600 mt-1">
                     検索ページで使用するデフォルトの検索モードを設定します。
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    ハイブリッド検索の重み: {hybridAlpha.toFixed(1)}
-                  </label>
-                  <div className="flex items-center gap-4">
-                    <span className="text-xs text-gray-500">キーワード</span>
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.1"
-                      value={hybridAlpha}
-                      onChange={(e) => setHybridAlpha(parseFloat(e.target.value))}
-                      className="flex-1"
-                    />
-                    <span className="text-xs text-gray-500">セマンティック</span>
-                  </div>
-                  <p className="text-sm text-gray-600 mt-1">
-                    0.7（デフォルト）= セマンティック70%、キーワード30%の比率で検索します。
+                    ハイブリッド検索ではセマンティック70%、キーワード30%の比率で検索します。
                   </p>
                 </div>
               </div>

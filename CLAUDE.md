@@ -239,6 +239,36 @@ gs://jikkennote-storage/
         └── dictionary.yaml
 ```
 
+### コレクション構成（v3.2.0）
+
+2コレクション構成を採用:
+
+| コレクション | 用途 | 内容 |
+|-------------|------|------|
+| `materials_methods_collection_{team_id}` | 材料・方法軸検索 | 材料+方法セクション結合 |
+| `combined_collection_{team_id}` | 総合軸検索 | ノート全体 |
+
+**設計思想**:
+- 実験ノートの材料セクションは「①HbA1c抗体 10mL」のように番号付き
+- 方法セクションは「①、②をビーカーに入れる」のように番号で省略
+- 材料+方法を結合することで、LLMが番号と材料名の対応を文脈から理解可能
+
+### 検索戦略（v3.2.0）
+
+3軸検索 + 軸別検索方式:
+
+| 軸 | コレクション | 検索方式 |
+|----|-------------|----------|
+| 材料軸 | materials_methods_collection | **BM25キーワード検索** |
+| 方法軸 | materials_methods_collection | **セマンティック検索** |
+| 総合軸 | combined_collection | **セマンティック検索** |
+
+**スコアブレンド & リランキング**:
+1. 各軸で検索を実行
+2. RRF（Reciprocal Rank Fusion）でスコアブレンド
+3. Cohere Rerankで最終リランキング
+4. 上位3件（評価モードでは10件）を返却
+
 ### データフロー
 
 #### 検索フロー
@@ -251,7 +281,11 @@ Frontend (Search Page) → API Request
 Backend (/search)
   ├─→ Normalize Node (utils.py: 材料名正規化)
   ├─→ Query Generation Node (agent.py: 3視点クエリ生成)
-  ├─→ Search Node (ChromaDB検索 + Cohere Reranking)
+  ├─→ Multi-Axis Search Node (v3.2.0: 軸別検索方式)
+  │     ├─→ 材料軸: BM25キーワード検索 (materials_methods_collection)
+  │     ├─→ 方法軸: セマンティック検索 (materials_methods_collection)
+  │     └─→ 総合軸: セマンティック検索 (combined_collection)
+  ├─→ Score Fusion Node (RRF + Cohere Reranking)
   └─→ Compare Node (上位3件の比較分析)
   ↓
 SearchResponse (retrieved_docs: Markdown[] )
@@ -497,6 +531,10 @@ curl -X POST "http://localhost:8000/search" \
 
 ## リリース履歴
 
+- **v2.1.0** (2026-01-07) - 検索戦略リファクタリング
+  - コレクション構成を3→2に簡素化（materials_methods + combined）
+  - 軸別検索方式を導入（材料軸: BM25キーワード、方法/総合軸: セマンティック）
+  - 取り込み時の省略形展開・サフィックスマッピング処理を削除
 - **v2.0.0** (2026-01-07) - 機能簡素化版（正規化辞書管理・新出単語抽出機能を削除）
 - **v1.x** - 旧バージョン（jikkennote-search_v1）
 
@@ -525,5 +563,5 @@ curl -X POST "http://localhost:8000/search" \
 
 **作成日**: 2026-01-07
 **最終更新**: 2026-01-07
-**バージョン**: 2.0.0 (機能簡素化版)
+**バージョン**: 2.1.0 (検索戦略リファクタリング)
 **管理者**: 開発チーム

@@ -414,3 +414,82 @@ def get_synonym_dictionary(team_id: Optional[str] = None) -> SynonymDictionary:
         SynonymDictionaryインスタンス
     """
     return SynonymDictionary(team_id=team_id)
+
+
+def normalize_text_with_synonyms(
+    text: str,
+    synonym_dict: SynonymDictionary
+) -> str:
+    """
+    同義語辞書を使ってテキストを正規化する（取り込み時用）
+
+    バリアントをcanonical形に置換する。
+    長い用語から優先的にマッチし、部分文字列の誤置換を防止。
+
+    Args:
+        text: 正規化するテキスト
+        synonym_dict: 同義語辞書インスタンス
+
+    Returns:
+        正規化されたテキスト
+
+    Example:
+        "精製水を使用" -> "純水を使用"
+        "HbA1c捕捉抗体Aを添加" -> "HbA1c捕捉抗体1を添加"
+    """
+    if not text or not synonym_dict.groups:
+        return text
+
+    # 全バリアント→canonical のマッピングを作成
+    variant_to_canonical: Dict[str, str] = {}
+    for group in synonym_dict.groups:
+        canonical = group.canonical
+        # バリアントのみを置換対象に（canonical自身は除外）
+        for variant in group.variants:
+            variant_to_canonical[variant] = canonical
+
+    if not variant_to_canonical:
+        return text
+
+    # 長い用語から優先してマッチ（より具体的な用語を先に処理）
+    sorted_variants = sorted(variant_to_canonical.keys(), key=len, reverse=True)
+
+    # 置換済み範囲を記録（重複置換を防ぐ）
+    result = text
+    replaced_positions: List[tuple] = []  # (original_start, original_end, new_start, new_end)
+
+    for variant in sorted_variants:
+        canonical = variant_to_canonical[variant]
+
+        # 現在のテキストでの位置を検索
+        search_start = 0
+        while True:
+            pos = result.find(variant, search_start)
+            if pos == -1:
+                break
+
+            end = pos + len(variant)
+
+            # 既に置換された範囲と重複していないかチェック
+            # （元のテキストベースではなく、現在のテキストベースでチェック）
+            overlaps = False
+            for _, _, rep_start, rep_end in replaced_positions:
+                if not (end <= rep_start or pos >= rep_end):
+                    overlaps = True
+                    break
+
+            if not overlaps:
+                # 置換を実行
+                result = result[:pos] + canonical + result[end:]
+
+                # 置換後の位置を記録
+                new_end = pos + len(canonical)
+                replaced_positions.append((pos, end, pos, new_end))
+
+                # 次の検索開始位置を更新
+                search_start = new_end
+            else:
+                # 重複があった場合は次の出現を探す
+                search_start = end
+
+    return result

@@ -31,6 +31,7 @@ export default function IngestPage() {
   const [sourceFolder, setSourceFolder] = useState('');
   const [postAction, setPostAction] = useState<'delete' | 'archive' | 'keep' | 'move_to_processed'>('move_to_processed');
   const [archiveFolder, setArchiveFolder] = useState('');
+  const [useSynonymNormalization, setUseSynonymNormalization] = useState(true);
   const [loading, setLoading] = useState(false);
   const [rebuildLoading, setRebuildLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -66,6 +67,7 @@ export default function IngestPage() {
         post_action: postAction,
         archive_folder: archiveFolder || undefined,
         embedding_model: embeddingModel || undefined,
+        use_synonym_normalization: useSynonymNormalization,
       }, idToken, currentTeamId);
 
       if (response.success) {
@@ -114,6 +116,7 @@ export default function IngestPage() {
         archive_folder: undefined,
         embedding_model: embeddingModel || undefined,
         rebuild_mode: true,
+        use_synonym_normalization: useSynonymNormalization,
       }, idToken, currentTeamId);
 
       if (response.success) {
@@ -354,6 +357,25 @@ export default function IngestPage() {
                 />
               </div>
             )}
+
+            {/* 同義語正規化 */}
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={useSynonymNormalization}
+                  onChange={(e) => setUseSynonymNormalization(e.target.checked)}
+                  className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <div>
+                  <span className="font-medium">同義語辞書による正規化を有効にする</span>
+                  <p className="text-sm text-gray-600 mt-1">
+                    有効にすると、取り込み時に表記を統一します（例: 精製水→純水、蒸留水→純水）。
+                    検索精度が向上しますが、辞書変更時はChromaDBの再構築が必要です。
+                  </p>
+                </div>
+              </label>
+            </div>
 
             {/* 実行ボタン */}
             <div>

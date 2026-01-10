@@ -16,6 +16,7 @@ export interface Team {
   name: string;
   role: string;
   createdAt: string;
+  inviteCode?: string;  // チーム招待コード（オーナーのみ表示）
 }
 
 // 認証コンテキストの型定義

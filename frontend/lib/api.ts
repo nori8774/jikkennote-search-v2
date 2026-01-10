@@ -78,6 +78,7 @@ export interface IngestRequest {
   archive_folder?: string;
   embedding_model?: string;
   rebuild_mode?: boolean;
+  use_synonym_normalization?: boolean;  // v3.2.1: 同義語辞書による正規化
 }
 
 export interface IngestResponse {

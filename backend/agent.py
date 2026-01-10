@@ -146,25 +146,21 @@ class SearchAgent:
             api_key=self.openai_api_key
         )
 
-        # Vector Store（v3.1.1: 3コレクション対応）
-        if team_id and self.multi_axis_enabled:
-            # 3コレクションモード: 材料/方法/総合の3つのvectorstoreを使用
+        # Vector Store（v3.2.0: 2コレクション対応に変更、v3.2.2: 常に2コレクション取得に変更）
+        if team_id:
+            # チームモード: 常に2コレクションを取得（3軸検索の有効/無効に関わらず）
+            # これにより、3軸検索が無効でもcombinedコレクションで検索可能
             self.vectorstores = get_team_multi_collection_vectorstores(
                 team_id=team_id,
                 embeddings=self.embedding_function,
                 embedding_model=self.embedding_model
             )
-            # 後方互換性: vectorstoreはcombinedを参照
+            # vectorstoreはcombinedを参照（単一クエリ検索時に使用）
             self.vectorstore = self.vectorstores["combined"]
-            print(f"3コレクションモード: materials, methods, combined vectorstores初期化完了")
-        elif team_id:
-            # 単一コレクションモード（チーム）
-            self.vectorstores = None
-            self.vectorstore = get_team_chroma_vectorstore(
-                team_id=team_id,
-                embeddings=self.embedding_function,
-                embedding_model=self.embedding_model
-            )
+            if self.multi_axis_enabled:
+                print(f"2コレクションモード（3軸検索有効）: materials_methods, combined vectorstores初期化完了")
+            else:
+                print(f"2コレクションモード（単一クエリ検索）: combinedコレクションを使用")
         else:
             # 後方互換性: team_idがない場合はグローバルを使用
             self.vectorstores = None
@@ -299,19 +295,25 @@ class SearchAgent:
         return updates
 
     def _generate_query_node(self, state: AgentState):
-        """クエリ生成ノード"""
+        """クエリ生成ノード（単一クエリ検索時）
+
+        v3.2.3: combined_query_generationプロンプトを使用するように変更
+        3軸分離検索と同じ「総合軸クエリ生成」プロンプトを使うことで、
+        保存済みのカスタムプロンプトが有効になる
+        """
         start_time = time.time()
         evaluation_mode = state.get("evaluation_mode", False)
 
         if evaluation_mode:
-            print("\n--- 🧠 [2/3] 多角的検索クエリ生成 ---")
+            print("\n--- 🧠 [2/3] 総合軸クエリ生成（単一クエリモード）---")
         else:
-            print("--- 🧠 [2/4] 多角的検索クエリ生成 ---")
+            print("--- 🧠 [2/4] 総合軸クエリ生成（単一クエリモード）---")
 
         instruction = state.get('user_focus_instruction', '特になし')
 
-        # カスタムプロンプトまたはデフォルトプロンプトを取得
-        prompt_template = self._get_prompt("query_generation")
+        # v3.2.3: combined_query_generationプロンプトを使用
+        # これにより、3軸分離検索と同じ「総合軸クエリ生成」のカスタムプロンプトが適用される
+        prompt_template = self._get_prompt("combined_query_generation")
 
         # プロンプトに変数を埋め込む
         prompt = prompt_template.format(
@@ -875,12 +877,12 @@ class SearchAgent:
         }
 
     def _multi_axis_search_node(self, state: AgentState):
-        """3軸検索実行ノード（v3.1.1: セクション別コレクション対応）
+        """3軸検索実行ノード（v3.2.0: 2コレクション + 軸別検索方式対応）
 
         各軸で独立して検索を実行する
-        - 材料軸: materials_collectionを検索
-        - 方法軸: methods_collectionを検索
-        - 総合軸: combined_collectionを検索
+        - 材料軸: materials_methods_collectionをBM25キーワード検索
+        - 方法軸: materials_methods_collectionをセマンティック検索
+        - 総合軸: combined_collectionをセマンティック検索
         """
         start_time = time.time()
         evaluation_mode = state.get("evaluation_mode", False)
@@ -888,21 +890,27 @@ class SearchAgent:
         rerank_enabled = state.get("rerank_enabled", self.rerank_enabled)
 
         if evaluation_mode:
-            print("\n--- 🔍 [4/6] 3軸検索実行（セクション別コレクション）---")
+            print("\n--- 🔍 [4/6] 3軸検索実行（2コレクション + 軸別検索方式）---")
         else:
-            print("--- 🔍 [4/7] 3軸検索実行（セクション別コレクション）---")
+            print("--- 🔍 [4/7] 3軸検索実行（2コレクション + 軸別検索方式）---")
 
-        search_mode = state.get("search_mode", self.search_mode)
         hybrid_alpha = state.get("hybrid_alpha", self.hybrid_alpha)
 
         results = {}
 
-        # v3.1.1: 各軸に対応するvectorstoreを決定
-        # vectorstoresが利用可能な場合（3コレクションモード）
+        # v3.2.0: 2コレクション構成
+        # 材料軸と方法軸は同じmaterials_methodsコレクションを使用
         axis_vectorstores = {
-            "material": self.vectorstores["materials"] if self.vectorstores else self.vectorstore,
-            "method": self.vectorstores["methods"] if self.vectorstores else self.vectorstore,
+            "material": self.vectorstores["materials_methods"] if self.vectorstores else self.vectorstore,
+            "method": self.vectorstores["materials_methods"] if self.vectorstores else self.vectorstore,
             "combined": self.vectorstores["combined"] if self.vectorstores else self.vectorstore
+        }
+
+        # v3.2.0: 軸別検索方式（config.AXIS_SEARCH_MODESから取得）
+        axis_search_modes = {
+            "material": config.AXIS_SEARCH_MODES.get("material", "keyword"),   # BM25キーワード検索
+            "method": config.AXIS_SEARCH_MODES.get("method", "semantic"),      # セマンティック検索
+            "combined": config.AXIS_SEARCH_MODES.get("combined", "semantic")   # セマンティック検索
         }
 
         # 各軸で検索を実行
@@ -913,11 +921,13 @@ class SearchAgent:
         ]:
             axis_label = {"material": "材料", "method": "方法", "combined": "総合"}[axis]
             target_vectorstore = axis_vectorstores[axis]
+            search_mode = axis_search_modes[axis]
 
-            # v3.1.1: コレクション名を表示
+            # v3.2.0: コレクション名と検索方式を表示
             collection_name = target_vectorstore._collection.name if hasattr(target_vectorstore, '_collection') else "unknown"
+            mode_label = {"keyword": "BM25キーワード", "semantic": "セマンティック", "hybrid": "ハイブリッド"}.get(search_mode, search_mode)
             print(f"\n  {'='*70}")
-            print(f"  📊 {axis_label}軸検索 (コレクション: {collection_name})")
+            print(f"  📊 {axis_label}軸検索 (コレクション: {collection_name}, 方式: {mode_label})")
             print(f"  {'='*70}")
 
             # v3.1.2: 検索クエリを省略せずに表示
@@ -930,11 +940,11 @@ class SearchAgent:
                 continue
 
             try:
-                # v3.2.1: 同義語展開を適用した検索
+                # v3.2.0: 軸別検索方式を適用した検索
                 search_results = self._search_with_synonym_expansion(
                     vectorstore=target_vectorstore,
                     query=query,
-                    search_mode=search_mode,
+                    search_mode=search_mode,  # 軸別の検索方式を使用
                     hybrid_alpha=hybrid_alpha,
                     k=config.VECTOR_SEARCH_K
                 )

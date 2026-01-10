@@ -116,6 +116,7 @@ class IngestRequest(BaseModel):
     archive_folder: Optional[str] = None
     embedding_model: Optional[str] = None
     rebuild_mode: bool = False  # ChromaDBリセット後の再構築モード
+    use_synonym_normalization: bool = True  # v3.2.1: 同義語辞書による正規化（デフォルト: True）
 
 
 class IngestResponse(BaseModel):
@@ -702,7 +703,8 @@ async def ingest_notes_endpoint(req_obj: Request, request: IngestRequest):
             archive_folder=request.archive_folder,
             embedding_model=request.embedding_model,
             rebuild_mode=request.rebuild_mode,
-            team_id=team_id  # v3.0: チームID指定
+            team_id=team_id,  # v3.0: チームID指定
+            use_synonym_normalization=request.use_synonym_normalization  # v3.2.1: 同義語正規化
         )
 
         if request.rebuild_mode:

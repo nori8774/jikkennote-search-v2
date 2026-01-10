@@ -46,12 +46,24 @@ class Config:
     RERANK_ENABLED = True  # リランキングの有効/無効
     RRF_K = 60  # RRF（Reciprocal Rank Fusion）のkパラメータ
 
-    # セクション別Embeddingコレクション設定（v3.1.1）
-    MATERIALS_COLLECTION_NAME = "materials_collection"  # 材料セクション用コレクション
-    METHODS_COLLECTION_NAME = "methods_collection"      # 方法セクション用コレクション
+    # セクション別Embeddingコレクション設定（v3.2.0: 2コレクション構成に変更）
+    # 旧設定（v3.1.1）- 後方互換性のため残す（リセット時の削除対象）
+    MATERIALS_COLLECTION_NAME = "materials_collection"  # 廃止（削除対象）
+    METHODS_COLLECTION_NAME = "methods_collection"      # 廃止（削除対象）
+
+    # 新設定（v3.2.0）- 2コレクション構成
+    MATERIALS_METHODS_COLLECTION_NAME = "materials_methods_collection"  # 材料+方法結合用コレクション
     COMBINED_COLLECTION_NAME = "combined_collection"    # ノート全体用コレクション
+
     # 後方互換性のため、従来のCOLLECTION_NAMEはCOMBINED_COLLECTION_NAMEを参照
     COLLECTION_NAME = COMBINED_COLLECTION_NAME
+
+    # 軸別検索方式設定（v3.2.0新規）
+    AXIS_SEARCH_MODES = {
+        "material": "keyword",    # 材料軸: BM25キーワード検索
+        "method": "semantic",     # 方法軸: セマンティック検索
+        "combined": "semantic"    # 総合軸: セマンティック検索
+    }
 
     @classmethod
     def ensure_folders(cls):

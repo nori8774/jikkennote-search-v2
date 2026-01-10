@@ -316,7 +316,7 @@ def get_team_chroma_vectorstore(team_id: str, embeddings, embedding_model: str =
 
 def get_team_multi_collection_vectorstores(team_id: str, embeddings, embedding_model: str = None):
     """
-    チームごとの3コレクション（材料/方法/総合）のベクトルストアを取得（v3.1.1新規）
+    チームごとの2コレクション（材料+方法結合/総合）のベクトルストアを取得（v3.2.0変更）
 
     Args:
         team_id: チームID
@@ -325,17 +325,16 @@ def get_team_multi_collection_vectorstores(team_id: str, embeddings, embedding_m
 
     Returns:
         dict: {
-            "materials": Chroma vectorstore（材料セクション用）,
-            "methods": Chroma vectorstore（方法セクション用）,
+            "materials_methods": Chroma vectorstore（材料+方法結合用）,
             "combined": Chroma vectorstore（ノート全体用）
         }
 
     Note:
         - コレクション名:
-            - materials_collection_{team_id}
-            - methods_collection_{team_id}
+            - materials_methods_collection_{team_id}（v3.2.0新規）
             - combined_collection_{team_id}
         - persist_directory: `teams/{team_id}/chroma-db`
+        - v3.2.0: 3コレクション→2コレクション構成に変更
     """
     from langchain_chroma import Chroma
 
@@ -345,10 +344,9 @@ def get_team_multi_collection_vectorstores(team_id: str, embeddings, embedding_m
     # ディレクトリが存在しない場合は作成
     Path(team_chroma_path).mkdir(parents=True, exist_ok=True)
 
-    # 3つのコレクション名を定義
+    # 2つのコレクション名を定義（v3.2.0: 2コレクション構成に変更）
     collection_names = {
-        "materials": f"{config.MATERIALS_COLLECTION_NAME}_{team_id}",
-        "methods": f"{config.METHODS_COLLECTION_NAME}_{team_id}",
+        "materials_methods": f"{config.MATERIALS_METHODS_COLLECTION_NAME}_{team_id}",
         "combined": f"{config.COMBINED_COLLECTION_NAME}_{team_id}"
     }
 
@@ -378,7 +376,7 @@ def get_team_multi_collection_vectorstores(team_id: str, embeddings, embedding_m
                 team_config = {}
 
             team_config['embedding_model'] = embedding_model
-            team_config['multi_collection'] = True  # v3.1.1: 3コレクション対応フラグ
+            team_config['multi_collection'] = True  # v3.2.0: 2コレクション対応フラグ
             team_config['updated_at'] = datetime.now().isoformat()
 
             with open(config_path, 'w') as f:
@@ -392,7 +390,7 @@ def get_team_multi_collection_vectorstores(team_id: str, embeddings, embedding_m
 
 def reset_team_collections(team_id: str):
     """
-    チームの全コレクションをリセット（v3.1.1新規）
+    チームの全コレクションをリセット（v3.2.0更新: 新旧コレクション両方を削除）
 
     Args:
         team_id: チームID
@@ -408,12 +406,16 @@ def reset_team_collections(team_id: str):
         # ChromaDBクライアントを作成
         client = chromadb.PersistentClient(path=team_chroma_path)
 
-        # 削除対象のコレクション名
+        # 削除対象のコレクション名（v3.2.0: 新旧両方を削除対象に）
         collection_names_to_delete = [
+            # v3.2.0 新コレクション
+            f"{config.MATERIALS_METHODS_COLLECTION_NAME}_{team_id}",
+            f"{config.COMBINED_COLLECTION_NAME}_{team_id}",
+            # v3.1.1 旧コレクション（マイグレーション対応）
             f"{config.MATERIALS_COLLECTION_NAME}_{team_id}",
             f"{config.METHODS_COLLECTION_NAME}_{team_id}",
-            f"{config.COMBINED_COLLECTION_NAME}_{team_id}",
-            f"notes_{team_id}"  # 後方互換性: 旧コレクション名も削除
+            # 後方互換性: 更に古いコレクション名も削除
+            f"notes_{team_id}"
         ]
 
         # 各コレクションを削除

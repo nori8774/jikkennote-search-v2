@@ -5,6 +5,7 @@ Ingest notes into vector database
 """
 import os
 import re
+import time
 from typing import Dict, List, Tuple
 from pathlib import Path
 
@@ -15,39 +16,42 @@ from langchain_core.documents import Document
 from config import config
 from utils import load_master_dict, normalize_text
 from storage import storage
+from synonym_dictionary import get_synonym_dictionary, normalize_text_with_synonyms
 from chroma_sync import (
     get_chroma_vectorstore,
     get_team_chroma_vectorstore,
     get_team_multi_collection_vectorstores,
     sync_chroma_to_gcs
 )
-from experimenter_profile import (
-    extract_shortcuts_from_materials,
-    expand_shortcuts_in_text,
-    apply_suffix_mapping,
-    ExperimenterProfileManager
-)
+# v3.2.0: 省略形展開処理を廃止（検索時にLLMが文脈から解釈）
+# from experimenter_profile import (
+#     extract_shortcuts_from_materials,
+#     expand_shortcuts_in_text,
+#     apply_suffix_mapping,
+#     ExperimenterProfileManager
+# )
 
 
 def extract_sections(content: str) -> Dict[str, str]:
     """
-    マークダウンノートから材料・方法セクションを抽出する（v3.1.1新規）
+    マークダウンノートから材料・方法セクションを抽出する（v3.2.0変更: 2コレクション対応）
 
     Args:
         content: ノート全体のMarkdownテキスト
 
     Returns:
         dict: {
-            "materials": 材料セクションのテキスト（見つからない場合は空文字列）,
-            "methods": 方法セクションのテキスト（見つからない場合は空文字列）,
+            "materials_methods": 材料+方法セクションを結合したテキスト（v3.2.0新規）,
             "combined": ノート全体のテキスト
         }
+
+    Note:
+        v3.2.0: 3コレクション→2コレクション構成に変更
+        - 旧: materials, methods, combined（個別コレクション）
+        - 新: materials_methods（結合）, combined（2コレクション）
     """
-    sections = {
-        "materials": "",
-        "methods": "",
-        "combined": content
-    }
+    materials = ""
+    methods = ""
 
     # 材料セクションの抽出（## 材料 または ## Materials）
     # 次のセクション（## で始まる行）までを抽出
@@ -59,7 +63,7 @@ def extract_sections(content: str) -> Dict[str, str]:
     for pattern in materials_patterns:
         match = re.search(pattern, content, re.DOTALL | re.IGNORECASE)
         if match:
-            sections["materials"] = match.group(1).strip()
+            materials = match.group(1).strip()
             break
 
     # 方法セクションの抽出（## 方法 または ## Methods）
@@ -69,15 +73,28 @@ def extract_sections(content: str) -> Dict[str, str]:
         r'## method\s*\n(.*?)(?=\n## |\Z)',
         r'## 手順\s*\n(.*?)(?=\n## |\Z)',
         r'## Procedure\s*\n(.*?)(?=\n## |\Z)',
-        r'## 実験手順\s*\n(.*?)(?=\n## |\Z)',  # v3.2.0: 「実験手順」パターン追加
+        r'## 実験手順\s*\n(.*?)(?=\n## |\Z)',
     ]
     for pattern in methods_patterns:
         match = re.search(pattern, content, re.DOTALL | re.IGNORECASE)
         if match:
-            sections["methods"] = match.group(1).strip()
+            methods = match.group(1).strip()
             break
 
-    return sections
+    # v3.2.0: 材料+方法を結合（LLMが番号と材料名の対応を文脈で理解できるように）
+    materials_methods = ""
+    if materials or methods:
+        parts = []
+        if materials:
+            parts.append(f"## 材料\n{materials}")
+        if methods:
+            parts.append(f"## 方法\n{methods}")
+        materials_methods = "\n\n".join(parts)
+
+    return {
+        "materials_methods": materials_methods,
+        "combined": content
+    }
 
 
 def parse_markdown_note(file_path: str, norm_map: dict) -> Dict:
@@ -138,11 +155,11 @@ def ingest_notes(
     embedding_model: str = None,
     rebuild_mode: bool = False,
     team_id: str = None,  # v3.0: マルチテナント対応
-    multi_collection: bool = True,  # v3.1.1: 3コレクション対応（デフォルト: True）
-    expand_shortcuts: bool = True  # v3.2.0: 省略形展開機能（デフォルト: True）
+    multi_collection: bool = True,  # v3.2.0: 2コレクション対応（デフォルト: True）
+    use_synonym_normalization: bool = True,  # v3.2.1: 同義語正規化（デフォルト: True）
 ) -> Tuple[List[str], List[str]]:
     """
-    ノートをデータベースに取り込む（増分更新）
+    ノートをデータベースに取り込む（増分更新）（v3.2.0簡素化版）
 
     Args:
         api_key: OpenAI APIキー
@@ -152,15 +169,18 @@ def ingest_notes(
         embedding_model: 使用するEmbeddingモデル
         rebuild_mode: ChromaDBリセット後の再構築モード（デフォルト: False）
         team_id: チームID（v3.0）
-        multi_collection: 3コレクションモード（v3.1.1）
-            - True: 材料/方法/総合の3コレクションに登録
+        multi_collection: 2コレクションモード（v3.2.0変更）
+            - True: materials_methods（材料+方法結合）とcombined（全体）の2コレクションに登録
             - False: 従来の単一コレクション（ノート全体のみ）
-        expand_shortcuts: 省略形展開機能（v3.2.0）
-            - True: 方法セクションの省略形（①②③等）を材料名に展開
-            - False: 展開せずにそのまま登録
+        use_synonym_normalization: 同義語辞書による正規化（v3.2.1追加）
+            - True: 取り込み時に同義語辞書を使って表記を統一（例: 精製水→純水）
+            - False: 同義語正規化を行わない（検索時の展開に依存）
 
     Returns:
         (new_notes, skipped_notes): 取り込んだノートIDと既存のノートID
+
+    Note:
+        v3.2.0: 省略形展開処理を廃止。検索時にLLMが文脈から材料名と番号の対応を解釈する方式に変更。
     """
     # パラメータのデフォルト値設定（v3.0: チーム対応）
     if team_id:
@@ -188,39 +208,44 @@ def ingest_notes(
 
     embedding_model = embedding_model or config.DEFAULT_EMBEDDING_MODEL
 
+    # 処理時間計測開始
+    total_start_time = time.time()
+    timing_stats = {
+        "dictionary_load": 0.0,
+        "synonym_load": 0.0,
+        "file_scan": 0.0,
+        "normalization_total": 0.0,
+        "embedding_total": 0.0,
+        "file_move": 0.0,
+        "total": 0.0
+    }
+
     # フォルダ確認（ストレージ抽象化に対応）
     storage.mkdir(source_folder)
 
     # 正規化辞書のロード
+    dict_start = time.time()
     norm_map, _ = load_master_dict()
-    print(f"正規化辞書ロード: {len(norm_map)} エントリ")
+    timing_stats["dictionary_load"] = time.time() - dict_start
+    print(f"正規化辞書ロード: {len(norm_map)} エントリ ({timing_stats['dictionary_load']:.2f}秒)")
 
-    # v3.2.0: 実験者プロファイルマネージャーの初期化（サフィックスマッピング用）
-    profile_manager = None
-    if team_id:
-        try:
-            profile_manager = ExperimenterProfileManager(team_id=team_id)
-            print(f"実験者プロファイルをロード: {len(profile_manager.experimenters)}件")
-        except Exception as e:
-            print(f"プロファイルロードエラー: {e}")
-            profile_manager = None
+    # 同義語辞書のロード（v3.2.1: 取り込み時正規化用）
+    synonym_dict = None
+    if use_synonym_normalization:
+        synonym_start = time.time()
+        synonym_dict = get_synonym_dictionary(team_id=team_id)
+        timing_stats["synonym_load"] = time.time() - synonym_start
+        print(f"同義語辞書ロード: {len(synonym_dict.groups)} グループ ({timing_stats['synonym_load']:.2f}秒)")
+    else:
+        print("同義語正規化: 無効（検索時の展開に依存）")
 
-    # v3.2.0: 省略形展開用のLLMを初期化（expand_shortcutsが有効な場合）
-    shortcut_llm = None
-    if expand_shortcuts:
-        try:
-            from langchain_openai import ChatOpenAI
-            shortcut_llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0)
-            print("省略形展開: LLMを初期化しました")
-        except Exception as e:
-            print(f"省略形展開LLM初期化エラー: {e}")
-            shortcut_llm = None
+    # v3.2.0: 省略形展開処理を廃止（LLM初期化、プロファイルマネージャー不要）
 
-    # ChromaDBの初期化（v3.1.1: 3コレクション対応）
+    # ChromaDBの初期化（v3.2.0: 2コレクション対応）
     embeddings = OpenAIEmbeddings(model=embedding_model, api_key=api_key)
 
     if team_id and multi_collection:
-        # v3.1.1: 3コレクションモード
+        # v3.2.0: 2コレクションモード
         vectorstores = get_team_multi_collection_vectorstores(
             team_id=team_id,
             embeddings=embeddings,
@@ -228,7 +253,7 @@ def ingest_notes(
         )
         # 既存IDチェックはcombinedコレクションを使用
         primary_vectorstore = vectorstores["combined"]
-        print("3コレクションモード: materials, methods, combinedに登録します")
+        print("2コレクションモード: materials_methods, combinedに登録します")
     elif team_id:
         vectorstores = None
         primary_vectorstore = get_team_chroma_vectorstore(
@@ -250,14 +275,17 @@ def ingest_notes(
         print(f"既存の登録ノート数: {len(existing_ids)}")
 
     # ファイルスキャンと新規判定
+    file_scan_start = time.time()
     files = storage.list_files(prefix=source_folder, pattern="*.md")
+    timing_stats["file_scan"] = time.time() - file_scan_start
+    print(f"ファイルスキャン: {len(files)} ファイル ({timing_stats['file_scan']:.2f}秒)")
 
-    # 3コレクション用のドキュメントリスト
-    materials_docs = []
-    methods_docs = []
+    # v3.2.0: 2コレクション用のドキュメントリスト
+    materials_methods_docs = []
     combined_docs = []
     skipped_ids = []
     new_ids = []
+    normalization_times = []
 
     for file in files:
         note_id = file.split('/')[-1].replace('.md', '')
@@ -272,95 +300,50 @@ def ingest_notes(
         data = parse_markdown_note(file, norm_map)
         content = data["full_content"]
 
-        # v3.1.1: セクション抽出
+        # v3.2.0: セクション抽出（材料+方法結合版）
         sections = extract_sections(content)
 
-        # v3.2.1: 辞書による名寄せ（材料・方法セクションを正規化）
-        materials_normalized = normalize_text(sections["materials"], norm_map) if sections["materials"] else ""
-        methods_normalized = normalize_text(sections["methods"], norm_map) if sections["methods"] else ""
+        # v3.2.1: 同義語辞書による正規化（取り込み時に表記統一）+ 時間計測
+        norm_start = time.time()
+
+        # Step 1: 基本正規化（master_dictionary）
+        materials_methods_normalized = normalize_text(sections["materials_methods"], norm_map) if sections["materials_methods"] else ""
         combined_normalized = normalize_text(sections["combined"], norm_map) if sections["combined"] else ""
 
-        # v3.2.0: サフィックスマッピングの適用（実験者プロファイルに基づく）
-        materials_text_for_embedding = materials_normalized
-        suffix_conventions = []
-        if profile_manager:
-            experimenter_id = profile_manager.get_experimenter_id(note_id)
-            if experimenter_id:
-                profile = profile_manager.get_profile(experimenter_id)
-                if profile and profile.suffix_conventions:
-                    suffix_conventions = profile.suffix_conventions
-                    # 材料セクションにサフィックスマッピングを適用
-                    materials_text_for_embedding = apply_suffix_mapping(
-                        sections["materials"],
-                        suffix_conventions
-                    )
-                    if materials_text_for_embedding != sections["materials"]:
-                        print(f"  サフィックス正規化: {note_id} (実験者{experimenter_id})")
+        # Step 2: 同義語辞書による正規化（バリアント→canonical）
+        if use_synonym_normalization and synonym_dict and synonym_dict.groups:
+            materials_methods_normalized = normalize_text_with_synonyms(materials_methods_normalized, synonym_dict)
+            combined_normalized = normalize_text_with_synonyms(combined_normalized, synonym_dict)
 
-        # v3.2.0: 省略形展開処理（ノートごとに材料セクションから動的解析）
-        methods_text_for_embedding = methods_normalized
-        if expand_shortcuts and shortcut_llm and sections["materials"] and sections["methods"]:
-            try:
-                # 材料セクションから省略形マッピングを動的に抽出
-                shortcuts = extract_shortcuts_from_materials(sections["materials"], shortcut_llm)
-
-                if shortcuts:
-                    # 抽出した省略形で方法セクションを展開
-                    methods_text_for_embedding = expand_shortcuts_in_text(
-                        sections["methods"],
-                        shortcuts
-                    )
-                    if methods_text_for_embedding != sections["methods"]:
-                        print(f"  省略形展開: {note_id} ({len(shortcuts)}件のマッピング)")
-            except Exception as e:
-                print(f"  省略形展開エラー ({note_id}): {e}")
-
-        # v3.2.0: 方法セクションにもサフィックスマッピングを適用
-        if suffix_conventions and methods_text_for_embedding:
-            methods_text_for_embedding = apply_suffix_mapping(
-                methods_text_for_embedding,
-                suffix_conventions
-            )
+        norm_time = time.time() - norm_start
+        normalization_times.append(norm_time)
 
         base_metadata = {
             "source": data["id"],
-            "note_id": data["id"],  # v3.1.1: note_idでマージするため追加
+            "note_id": data["id"],
             "materials": ", ".join(data["search_keywords"])
         }
 
         print(f"Processing New File: {data['id']} -> Keywords: {base_metadata['materials']}")
 
         if multi_collection and vectorstores:
-            # 3コレクションモード: 各セクションを別々のドキュメントとして追加
-            # 材料セクション（空でない場合のみ）
-            # v3.2.0: サフィックス正規化済みのテキストを使用
-            if materials_text_for_embedding:
-                materials_docs.append(Document(
-                    page_content=materials_text_for_embedding,
-                    metadata={**base_metadata, "section_type": "materials"}
+            # v3.2.0: 2コレクションモード
+            # 材料+方法セクション（空でない場合のみ）
+            if materials_methods_normalized:
+                materials_methods_docs.append(Document(
+                    page_content=materials_methods_normalized,
+                    metadata={**base_metadata, "section_type": "materials_methods"}
                 ))
             else:
-                print(f"  警告: {data['id']} - 材料セクションが見つかりません")
-
-            # 方法セクション（空でない場合のみ）
-            # v3.2.0: 省略形展開済みのテキストを使用
-            if methods_text_for_embedding:
-                methods_docs.append(Document(
-                    page_content=methods_text_for_embedding,
-                    metadata={**base_metadata, "section_type": "methods"}
-                ))
-            else:
-                print(f"  警告: {data['id']} - 方法セクションが見つかりません")
+                print(f"  警告: {data['id']} - 材料・方法セクションが見つかりません")
 
             # 総合（ノート全体）
-            # v3.2.1: 辞書正規化済みのテキストを使用
             combined_docs.append(Document(
                 page_content=combined_normalized,
                 metadata={**base_metadata, "section_type": "combined"}
             ))
         else:
             # 従来モード: ノート全体のみ
-            # v3.2.1: 辞書正規化済みのテキストを使用
             combined_docs.append(Document(
                 page_content=normalize_text(content, norm_map),
                 metadata=base_metadata
@@ -368,7 +351,14 @@ def ingest_notes(
 
         new_ids.append(note_id)
 
+    # 正規化時間の集計
+    if normalization_times:
+        timing_stats["normalization_total"] = sum(normalization_times)
+        avg_norm_time = timing_stats["normalization_total"] / len(normalization_times)
+        print(f"正規化処理: 合計 {timing_stats['normalization_total']:.2f}秒, 平均 {avg_norm_time*1000:.1f}ms/ノート")
+
     # DBへの追加登録（バッチ処理）
+    embedding_start = time.time()
     if new_ids:
         print(f"{len(new_ids)} 件の新規ノートをデータベースに追加しています...")
 
@@ -376,10 +366,9 @@ def ingest_notes(
         BATCH_SIZE = 50
 
         if multi_collection and vectorstores:
-            # v3.1.1: 3コレクションに登録
+            # v3.2.0: 2コレクションに登録
             for collection_name, docs, vectorstore in [
-                ("materials", materials_docs, vectorstores["materials"]),
-                ("methods", methods_docs, vectorstores["methods"]),
+                ("materials_methods", materials_methods_docs, vectorstores["materials_methods"]),
                 ("combined", combined_docs, vectorstores["combined"])
             ]:
                 if not docs:
@@ -417,12 +406,14 @@ def ingest_notes(
                     print(f"  バッチ {batch_num}/{total_batches}: エラー - {str(e)}")
                     continue
 
-        print("\n登録完了。")
+        timing_stats["embedding_total"] = time.time() - embedding_start
+        print(f"\n登録完了。(Embedding生成+DB追加: {timing_stats['embedding_total']:.2f}秒)")
 
         # GCSに同期（本番環境のみ）
         sync_chroma_to_gcs()
 
         # ファイル処理（post_action に応じて）
+        file_move_start = time.time()
         for note_id in new_ids:
             file_path = f"{source_folder}/{note_id}.md"
 
@@ -447,8 +438,28 @@ def ingest_notes(
             elif post_action == 'keep':
                 print(f"  Kept: {file_path}")
 
+        timing_stats["file_move"] = time.time() - file_move_start
+
     else:
         print("新規に追加すべきノートはありませんでした。")
+
+    # 処理時間の最終集計
+    timing_stats["total"] = time.time() - total_start_time
+
+    print("\n" + "=" * 50)
+    print("処理時間サマリー")
+    print("=" * 50)
+    print(f"  辞書ロード（正規化）: {timing_stats['dictionary_load']:.2f}秒")
+    print(f"  辞書ロード（同義語）: {timing_stats['synonym_load']:.2f}秒")
+    print(f"  ファイルスキャン: {timing_stats['file_scan']:.2f}秒")
+    print(f"  正規化処理: {timing_stats['normalization_total']:.2f}秒")
+    print(f"  Embedding生成+DB追加: {timing_stats['embedding_total']:.2f}秒")
+    print(f"  ファイル移動: {timing_stats['file_move']:.2f}秒")
+    print("-" * 50)
+    print(f"  合計: {timing_stats['total']:.2f}秒")
+    if new_ids:
+        print(f"  1ノートあたり平均: {timing_stats['total']/len(new_ids):.2f}秒")
+    print("=" * 50)
 
     return new_ids, skipped_ids
 
