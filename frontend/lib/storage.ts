@@ -12,6 +12,7 @@ const STORAGE_KEYS = {
   SUMMARY_LLM_MODEL: 'summary_llm_model',  // v3.0: 要約生成用LLM
   SEARCH_MODE: 'search_mode',  // v3.0.1: 検索モード
   HYBRID_ALPHA: 'hybrid_alpha',  // v3.0.1: ハイブリッド検索の重み
+  MULTI_AXIS_ENABLED: 'multi_axis_enabled',  // v3.2.3: 3軸分離検索の有効/無効
   CUSTOM_PROMPTS: 'custom_prompts',
   FOLDER_PATHS: 'folder_paths',
   STORAGE_TYPE: 'storage_type',
@@ -89,6 +90,17 @@ export const storage = {
   getHybridAlpha(): number | null {
     const value = localStorage.getItem(STORAGE_KEYS.HYBRID_ALPHA);
     return value ? parseFloat(value) : null;
+  },
+
+  // v3.2.3: 3軸分離検索の有効/無効
+  setMultiAxisEnabled(enabled: boolean) {
+    localStorage.setItem(STORAGE_KEYS.MULTI_AXIS_ENABLED, enabled.toString());
+  },
+
+  getMultiAxisEnabled(): boolean | null {
+    const value = localStorage.getItem(STORAGE_KEYS.MULTI_AXIS_ENABLED);
+    if (value === null) return null;
+    return value === 'true';
   },
 
   // カスタムプロンプト

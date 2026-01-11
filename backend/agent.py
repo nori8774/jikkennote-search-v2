@@ -179,7 +179,8 @@ class SearchAgent:
         # 検索・判定用LLM（正規化、クエリ生成に使用）
         search_llm_kwargs = {
             "model": self.search_llm_model,
-            "api_key": self.openai_api_key
+            "api_key": self.openai_api_key,
+            "seed": 42  # v3.2.4: 再現性のためseedを固定
         }
         if supports_temperature(self.search_llm_model):
             search_llm_kwargs["temperature"] = 0
@@ -188,7 +189,8 @@ class SearchAgent:
         # 要約生成用LLM（比較ノードに使用）
         summary_llm_kwargs = {
             "model": self.summary_llm_model,
-            "api_key": self.openai_api_key
+            "api_key": self.openai_api_key,
+            "seed": 42  # v3.2.4: 再現性のためseedを固定
         }
         if supports_temperature(self.summary_llm_model):
             summary_llm_kwargs["temperature"] = 0
@@ -200,8 +202,15 @@ class SearchAgent:
         self.graph = self._build_graph()
 
     def _get_prompt(self, prompt_type: str) -> str:
-        """プロンプトを取得（カスタムまたはデフォルト）"""
-        return self.prompts.get(prompt_type, get_default_prompt(prompt_type))
+        """プロンプトを取得（カスタムまたはデフォルト）
+
+        カスタムプロンプトが空文字の場合はデフォルトを使用する
+        """
+        custom = self.prompts.get(prompt_type)
+        # カスタムプロンプトが存在し、空文字でない場合のみ使用
+        if custom and custom.strip():
+            return custom
+        return get_default_prompt(prompt_type)
 
     def _normalize_node(self, state: AgentState):
         """正規化ノード"""
@@ -239,11 +248,18 @@ class SearchAgent:
                         updates["input_materials"] = data.get("materials", "")
                         updates["input_methods"] = data.get("methods", "")
 
-                        # 初回検索時のデフォルト指示
-                        updates["user_focus_instruction"] = (
-                            "使用されている材料(化学物質、容量）と、方法（化学物質、容量、手順）の記述が"
-                            "類似している実験ノートを最優先して検索してください。"
-                        )
+                        # v3.2.4: ユーザーが重点指示を入力していればそれを使用、
+                        # 空の場合のみデフォルト指示を適用
+                        user_instruction = data.get("instruction", "").strip()
+                        if user_instruction:
+                            updates["user_focus_instruction"] = user_instruction
+                            print(f"  📌 重点指示（ユーザー指定）: {user_instruction[:50]}...")
+                        else:
+                            updates["user_focus_instruction"] = (
+                                "使用されている材料(化学物質、容量）と、方法（化学物質、容量、手順）の記述が"
+                                "類似している実験ノートを最優先して検索してください。"
+                            )
+                            print(f"  📌 重点指示（デフォルト適用）")
 
                     elif data.get("type") == "refinement":
                         updates["user_focus_instruction"] = data.get("instruction", "")
@@ -280,15 +296,9 @@ class SearchAgent:
         normalized_str = "\n".join(normalized_parts) if normalized_parts else raw_materials
         updates["normalized_materials"] = normalized_str
 
-        # 評価モード時に入力情報を詳細表示
-        if evaluation_mode:
-            print("\n  📋 [入力情報]")
-            print(f"  目的: {updates.get('input_purpose', state.get('input_purpose', ''))}")
-            print(f"  材料: {updates.get('input_materials', state.get('input_materials', ''))}")
-            print(f"  実験手法: {updates.get('input_methods', state.get('input_methods', ''))}")
-            print(f"  重点指示: {updates.get('user_focus_instruction', state.get('user_focus_instruction', ''))}")
-            print(f"\n  📝 [正規化後の材料]")
-            print(f"  {normalized_str}")
+        # 正規化完了をサマリ表示（検索/評価モード共通）
+        material_count = len(normalized_parts) if normalized_parts else 0
+        print(f"  📝 正規化完了: {material_count}材料")
 
         elapsed_time = time.time() - start_time
         print(f"  ⏱️ Execution Time: {elapsed_time:.4f} sec")
@@ -315,11 +325,11 @@ class SearchAgent:
         # これにより、3軸分離検索と同じ「総合軸クエリ生成」のカスタムプロンプトが適用される
         prompt_template = self._get_prompt("combined_query_generation")
 
-        # プロンプトに変数を埋め込む
+        # プロンプトに変数を埋め込む（Noneの場合は空文字列にフォールバック）
         prompt = prompt_template.format(
-            input_purpose=state.get('input_purpose'),
-            normalized_materials=state.get('normalized_materials'),
-            input_methods=state.get('input_methods'),
+            input_purpose=state.get('input_purpose') or '',
+            normalized_materials=state.get('normalized_materials') or '',
+            input_methods=state.get('input_methods') or '',
             user_focus_instruction=instruction
         )
 
@@ -351,22 +361,17 @@ class SearchAgent:
 
             combined_query = " ".join(queries)
 
-            # 評価モード時はクエリ全体を表示
-            if evaluation_mode:
-                print(f"\n  🔍 [生成されたクエリ]")
-                print(f"  統合クエリ（{len(queries)}個のクエリを結合）:")
-                print(f"  {combined_query}")
-                print(f"\n  各クエリの詳細:")
-                for i, q in enumerate(queries, 1):
-                    print(f"    {i}. {q}")
-            else:
-                print(f"  > Generated Query: {combined_query[:100]}...")
+            # クエリ全体を表示（検索/評価モード共通）
+            print(f"\n  🔍 [生成されたクエリ] ({len(queries)}個)")
+            for i, q in enumerate(queries, 1):
+                print(f"    {i}. {q}")
+            print(f"\n  📎 [統合検索クエリ]\n    {combined_query}")
 
         except Exception as e:
             print(f"  > ⚠️ Query Parse Error: {e}")
             print(f"  > Raw response: {response.content[:200]}...")
             # フォールバック: 入力をそのままクエリとして使用
-            combined_query = f"{state.get('input_purpose')} {state.get('normalized_materials')} {instruction}"
+            combined_query = f"{state.get('input_purpose') or ''} {state.get('normalized_materials') or ''} {instruction}"
             print(f"  > Fallback query: {combined_query[:100]}...")
 
         elapsed_time = time.time() - start_time
@@ -411,9 +416,6 @@ class SearchAgent:
 
         if len(expanded_queries) > 1:
             print(f"    > 同義語展開: {len(expanded_queries)}クエリに展開")
-            for i, eq in enumerate(expanded_queries):
-                if eq != query:
-                    print(f"      展開{i+1}: {eq[:60]}...")
 
         # 各クエリで検索し、結果をマージ
         all_results = {}  # {note_id: (doc, max_score)}

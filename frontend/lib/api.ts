@@ -45,6 +45,7 @@ export interface SearchRequest {
   search_mode?: 'semantic' | 'keyword' | 'hybrid';  // 検索モード
   hybrid_alpha?: number;  // ハイブリッド検索のセマンティック重み（0.0-1.0）
   custom_prompts?: Record<string, string>;
+  prompt_name?: string;  // v3.2.4: プロンプト名（ログ表示用）
   evaluation_mode?: boolean;  // 評価モード（True: 比較省略、Top10返却）
   // v3.1.0: 3軸分離検索設定
   multi_axis_enabled?: boolean;  // 3軸検索の有効/無効
@@ -217,6 +218,7 @@ export interface SynonymGroup {
 export interface SynonymGroupsResponse {
   success: boolean;
   groups: SynonymGroup[];
+  message?: string;
 }
 
 export interface SynonymGroupMutationResponse {
@@ -817,6 +819,113 @@ export const api = {
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
       throw new Error(error.detail || `Remove variant failed: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  // ============================================
+  // 同義語辞書エクスポート/インポート（v3.2.3）
+  // ============================================
+
+  /**
+   * 同義語辞書をYAML形式でエクスポート（API経由）
+   */
+  async exportSynonymsYaml(
+    idToken: string | null = null,
+    teamId: string | null = null
+  ): Promise<{ success: boolean; yaml_content: string; group_count: number }> {
+    const headers = getAuthHeaders(idToken, teamId);
+    const response = await fetch(`${API_BASE_URL}/synonyms/export`, {
+      headers,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || `Export synonyms failed: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  /**
+   * 同義語辞書をYAMLファイルとしてダウンロード
+   */
+  async downloadSynonymsYaml(
+    idToken: string | null = null,
+    teamId: string | null = null
+  ): Promise<void> {
+    const headers = getAuthHeaders(idToken, teamId);
+    const response = await fetch(`${API_BASE_URL}/synonyms/export/yaml`, {
+      headers,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || `Download synonyms failed: ${response.statusText}`);
+    }
+
+    // Blobとしてダウンロード
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+
+    // Content-Dispositionからファイル名を取得
+    const contentDisposition = response.headers.get('Content-Disposition');
+    const filenameMatch = contentDisposition?.match(/filename=(.+)/);
+    const filename = filenameMatch ? filenameMatch[1] : 'synonym_dictionary.yaml';
+
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  },
+
+  /**
+   * 同義語辞書をYAML形式からインポート
+   */
+  async importSynonymsYaml(
+    yamlContent: string,
+    merge: boolean = false,
+    idToken: string | null = null,
+    teamId: string | null = null
+  ): Promise<{ success: boolean; message: string; added_count: number; updated_count: number }> {
+    const headers = getAuthHeaders(idToken, teamId);
+    const response = await fetch(`${API_BASE_URL}/synonyms/import`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        yaml_content: yamlContent,
+        merge,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || `Import synonyms failed: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  /**
+   * 同義語辞書をファイルから再読み込み
+   */
+  async reloadSynonyms(
+    idToken: string | null = null,
+    teamId: string | null = null
+  ): Promise<SynonymGroupsResponse> {
+    const headers = getAuthHeaders(idToken, teamId);
+    const response = await fetch(`${API_BASE_URL}/synonyms/reload`, {
+      method: 'POST',
+      headers,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || `Reload synonyms failed: ${response.statusText}`);
     }
 
     return response.json();

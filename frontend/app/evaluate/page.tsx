@@ -273,7 +273,12 @@ export default function EvaluatePage() {
             cohere_api_key: cohereKey,
             embedding_model: embeddingModel,
             llm_model: llmModel,
+            // v3.2.3: 検索ページと同じパラメータを追加（条件統一）
+            search_llm_model: llmModel,  // 検索・判定用LLMも同じモデルを使用
+            summary_llm_model: llmModel, // 要約生成用LLMも同じモデルを使用
+            search_mode: 'semantic',     // セマンティック検索
             custom_prompts: customPrompts,
+            prompt_name: promptName || 'デフォルト', // v3.2.4: プロンプト名をログ表示用に送信
             evaluation_mode: true,  // 評価モードを有効化
             // v3.1.0: 3軸分離検索設定
             multi_axis_enabled: multiAxisEnabled,
@@ -537,15 +542,17 @@ export default function EvaluatePage() {
         const rerankEnabledStr = mas?.rerankEnabled ? '有効' : '無効';
 
         history.results.forEach((result) => {
+          // metricsが存在しない場合のフォールバック
+          const metrics = result.metrics || { ndcg_10: 0, precision_10: 0, recall_10: 0, mrr: 0 };
           rows.push([
-            result.condition_id.toString(),
-            history.embedding_model,
-            history.llm_model,
+            result.condition_id?.toString() || '',
+            history.embedding_model || '',
+            history.llm_model || '',
             history.promptName || 'デフォルト',
-            result.metrics.ndcg_10.toFixed(4),
-            result.metrics.precision_10.toFixed(4),
-            result.metrics.recall_10.toFixed(4),
-            result.metrics.mrr.toFixed(4),
+            (metrics.ndcg_10 ?? 0).toFixed(4),
+            (metrics.precision_10 ?? 0).toFixed(4),
+            (metrics.recall_10 ?? 0).toFixed(4),
+            (metrics.mrr ?? 0).toFixed(4),
             multiAxisStr,
             fusionStr,
             materialWeight,
@@ -553,7 +560,9 @@ export default function EvaluatePage() {
             combinedWeight,
             rerankPosStr,
             rerankEnabledStr,
-            history.timestamp.toISOString()
+            history.timestamp instanceof Date
+              ? history.timestamp.toISOString()
+              : new Date(history.timestamp).toISOString()
           ]);
         });
       });
@@ -602,9 +611,11 @@ export default function EvaluatePage() {
       try {
         // バックエンドからプロンプトをロード（認証情報を渡す）
         const result = await api.loadPrompt(savedPrompt.id, idToken, currentTeamId);
-        if (result.success && result.prompts) {
-          setCustomPrompts(result.prompts);
-          console.log(`プロンプト「${promptName}」をロードしました`);
+        // v3.2.3: 検索ページと同じ形式でプロンプトを取得（result.prompt.prompts）
+        if (result.success && result.prompt) {
+          const savedPrompts = result.prompt.prompts || {};
+          setCustomPrompts(savedPrompts);
+          console.log(`プロンプト「${promptName}」をロードしました:`, Object.keys(savedPrompts));
         }
       } catch (error) {
         console.error(`プロンプト「${promptName}」のロードに失敗:`, error);

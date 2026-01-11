@@ -24,6 +24,7 @@ export default function SettingsPage() {
   const [summaryLlmModel, setSummaryLlmModel] = useState('gpt-3.5-turbo');  // v3.0: 要約生成用（デフォルト: 高速）
   const [searchMode, setSearchMode] = useState<'semantic' | 'keyword' | 'hybrid'>('semantic');  // v3.0.1
   const [hybridAlpha, setHybridAlpha] = useState(0.7);  // v3.0.1
+  const [multiAxisEnabled, setMultiAxisEnabled] = useState(true);  // v3.2.3: 3軸分離検索
   const [defaultPrompts, setDefaultPrompts] = useState<any>(null);
   const [customPrompts, setCustomPrompts] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<'api' | 'models' | 'prompts' | 'notes' | 'profiles' | 'synonyms'>('api');
@@ -91,6 +92,8 @@ export default function SettingsPage() {
     // v3.0.1: ハイブリッド検索
     setSearchMode(storage.getSearchMode() || 'semantic');
     setHybridAlpha(storage.getHybridAlpha() ?? 0.7);
+    // v3.2.3: 3軸分離検索
+    setMultiAxisEnabled(storage.getMultiAxisEnabled() ?? true);
     setCustomPrompts(storage.getCustomPrompts() || {});
 
     // Google Drive設定を読み込む
@@ -177,6 +180,8 @@ export default function SettingsPage() {
     // v3.0.1: ハイブリッド検索
     storage.setSearchMode(searchMode);
     storage.setHybridAlpha(hybridAlpha);
+    // v3.2.3: 3軸分離検索
+    storage.setMultiAxisEnabled(multiAxisEnabled);
     storage.setCustomPrompts(customPrompts);
 
     // Google Drive設定を保存
@@ -820,25 +825,53 @@ export default function SettingsPage() {
                 </p>
               </div>
 
-              {/* 検索設定セクション（v3.0.1、v3.2.2: ハイブリッド重み設定削除） */}
+              {/* 検索設定セクション（v3.0.1、v3.2.2: ハイブリッド重み設定削除、v3.2.3: 3軸分離検索追加） */}
               <div className="border-t border-gray-300 pt-6 mt-6">
                 <h3 className="text-lg font-bold mb-4">検索設定</h3>
 
-                <div>
-                  <label className="block text-sm font-medium mb-2">デフォルト検索モード</label>
-                  <select
-                    className="w-full border border-gray-300 rounded-md p-3"
-                    value={searchMode}
-                    onChange={(e) => setSearchMode(e.target.value as 'semantic' | 'keyword' | 'hybrid')}
-                  >
-                    <option value="semantic">セマンティック検索（意味的類似性）</option>
-                    <option value="keyword">キーワード検索（固有名詞に強い）</option>
-                    <option value="hybrid">ハイブリッド検索（推奨）</option>
-                  </select>
-                  <p className="text-sm text-gray-600 mt-1">
-                    検索ページで使用するデフォルトの検索モードを設定します。
-                    ハイブリッド検索ではセマンティック70%、キーワード30%の比率で検索します。
-                  </p>
+                <div className="space-y-6">
+                  {/* 3軸分離検索設定（v3.2.3） */}
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={multiAxisEnabled}
+                        onChange={(e) => setMultiAxisEnabled(e.target.checked)}
+                        className="w-5 h-5 rounded border-gray-300"
+                      />
+                      <span className="font-medium">3軸分離検索を有効にする</span>
+                    </label>
+                    <p className="text-sm text-gray-600 mt-2 ml-8">
+                      有効にすると、材料軸・方法軸・総合軸の3つの視点で検索を行い、
+                      結果をスコア統合して最適な実験ノートを見つけます。
+                      無効にすると、総合軸のみで検索します。
+                    </p>
+                    <div className="mt-3 ml-8 text-xs text-gray-500">
+                      <p><strong>材料軸:</strong> BM25キーワード検索（固有名詞に強い）</p>
+                      <p><strong>方法軸:</strong> セマンティック検索（手順の類似性）</p>
+                      <p><strong>総合軸:</strong> セマンティック検索（目的・材料・方法の総合評価）</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-2">デフォルト検索モード</label>
+                    <select
+                      className="w-full border border-gray-300 rounded-md p-3"
+                      value={searchMode}
+                      onChange={(e) => setSearchMode(e.target.value as 'semantic' | 'keyword' | 'hybrid')}
+                    >
+                      <option value="semantic">セマンティック検索（意味的類似性）</option>
+                      <option value="keyword">キーワード検索（固有名詞に強い）</option>
+                      <option value="hybrid">ハイブリッド検索（推奨）</option>
+                    </select>
+                    <p className="text-sm text-gray-600 mt-1">
+                      {multiAxisEnabled
+                        ? '3軸分離検索が有効の場合、この設定は総合軸の検索モードに適用されます。'
+                        : '単一クエリ検索で使用するデフォルトの検索モードを設定します。'
+                      }
+                      ハイブリッド検索ではセマンティック70%、キーワード30%の比率で検索します。
+                    </p>
+                  </div>
                 </div>
               </div>
 
@@ -1393,6 +1426,81 @@ export default function SettingsPage() {
                     </span>
                   </p>
                 )}
+              </div>
+
+              {/* エクスポート/インポート（v3.2.3） */}
+              <div className="border border-gray-300 rounded-lg p-4">
+                <h3 className="font-bold mb-3">バックアップ・リストア</h3>
+                <div className="flex flex-wrap gap-3">
+                  <Button
+                    variant="secondary"
+                    onClick={async () => {
+                      try {
+                        await api.downloadSynonymsYaml(idToken, currentTeamId);
+                        alert('同義語辞書をダウンロードしました');
+                      } catch (error) {
+                        alert(`ダウンロードエラー: ${error instanceof Error ? error.message : '不明なエラー'}`);
+                      }
+                    }}
+                  >
+                    YAMLでダウンロード
+                  </Button>
+                  <label className="inline-block">
+                    <input
+                      type="file"
+                      accept=".yaml,.yml"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+
+                        try {
+                          const content = await file.text();
+
+                          // マージするか置き換えるか確認
+                          const merge = confirm(
+                            'インポート方法を選択してください:\n\n' +
+                            '「OK」: 既存の辞書とマージ（追加・更新のみ）\n' +
+                            '「キャンセル」: 既存の辞書を置き換え（全削除後にインポート）'
+                          );
+
+                          const result = await api.importSynonymsYaml(content, merge, idToken, currentTeamId);
+                          alert(result.message);
+
+                          // 辞書を再読み込み
+                          await loadSynonyms();
+                        } catch (error) {
+                          alert(`インポートエラー: ${error instanceof Error ? error.message : '不明なエラー'}`);
+                        }
+
+                        // ファイル入力をリセット
+                        e.target.value = '';
+                      }}
+                    />
+                    <span className="inline-block px-4 py-2 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded cursor-pointer text-sm">
+                      YAMLからインポート
+                    </span>
+                  </label>
+                  <Button
+                    variant="secondary"
+                    onClick={async () => {
+                      try {
+                        const result = await api.reloadSynonyms(idToken, currentTeamId);
+                        if (result.success) {
+                          setSynonymGroups(result.groups || []);
+                          alert(result.message || '同義語辞書を再読み込みしました');
+                        }
+                      } catch (error) {
+                        alert(`再読み込みエラー: ${error instanceof Error ? error.message : '不明なエラー'}`);
+                      }
+                    }}
+                  >
+                    サーバーから再読み込み
+                  </Button>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  ※ YAMLファイルでバックアップを取っておくと、何かあった時に復元できます
+                </p>
               </div>
 
               {/* 使い方のヒント */}

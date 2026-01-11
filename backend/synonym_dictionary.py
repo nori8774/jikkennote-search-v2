@@ -402,6 +402,96 @@ class SynonymDictionary:
             return group.canonical
         return term
 
+    # ============================================
+    # エクスポート/インポート機能（v3.2.3）
+    # ============================================
+
+    def export_yaml(self) -> str:
+        """
+        同義語辞書をYAML形式でエクスポート
+
+        Returns:
+            YAML形式の文字列
+        """
+        data = {
+            'groups': [group.to_dict() for group in self.groups]
+        }
+        return yaml.dump(
+            data,
+            allow_unicode=True,
+            sort_keys=False,
+            default_flow_style=False
+        )
+
+    def import_yaml(self, yaml_content: str, merge: bool = False) -> tuple:
+        """
+        YAML形式から同義語辞書をインポート
+
+        Args:
+            yaml_content: YAML形式の文字列
+            merge: Trueの場合、既存のグループとマージ。Falseの場合、完全に置き換え。
+
+        Returns:
+            (成功したか, メッセージ, 追加数, 更新数, スキップ数)
+        """
+        try:
+            data = yaml.safe_load(yaml_content)
+            if not data or 'groups' not in data:
+                return (False, "無効なYAML形式です。'groups'キーが必要です。", 0, 0, 0)
+
+            imported_groups = []
+            for group_data in data.get('groups', []):
+                if 'canonical' not in group_data:
+                    continue
+                group = SynonymGroup.from_dict(group_data)
+                imported_groups.append(group)
+
+            if not imported_groups:
+                return (False, "インポートするグループがありません。", 0, 0, 0)
+
+            added_count = 0
+            updated_count = 0
+            skipped_count = 0
+            now = datetime.now().isoformat()
+
+            if merge:
+                # マージモード: 既存のグループと統合
+                existing_canonicals = {g.canonical for g in self.groups}
+
+                for imported_group in imported_groups:
+                    existing = self.get_group(imported_group.canonical)
+                    if existing:
+                        # 既存グループを更新（バリアントをマージ）
+                        new_variants = set(existing.variants)
+                        new_variants.update(imported_group.variants)
+                        existing.variants = list(new_variants)
+                        existing.updated_at = now
+                        updated_count += 1
+                    else:
+                        # 新規グループを追加
+                        imported_group.created_at = imported_group.created_at or now
+                        imported_group.updated_at = now
+                        self.groups.append(imported_group)
+                        added_count += 1
+            else:
+                # 置換モード: 完全に置き換え
+                added_count = len(imported_groups)
+                for g in imported_groups:
+                    g.created_at = g.created_at or now
+                    g.updated_at = now
+                self.groups = imported_groups
+
+            self._rebuild_index()
+            self.save()
+
+            message = f"インポート完了: 追加{added_count}件, 更新{updated_count}件"
+            return (True, message, added_count, updated_count, skipped_count)
+
+        except yaml.YAMLError as e:
+            return (False, f"YAML解析エラー: {str(e)}", 0, 0, 0)
+        except Exception as e:
+            return (False, f"インポートエラー: {str(e)}", 0, 0, 0)
+
 
 def get_synonym_dictionary(team_id: Optional[str] = None) -> SynonymDictionary:
     """

@@ -10,6 +10,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 
+
 function SearchContent() {
   const { idToken, currentTeamId } = useAuth();
   const searchParams = useSearchParams();
@@ -33,6 +34,60 @@ function SearchContent() {
   const [researchInstruction, setResearchInstruction] = useState('');
   // FR-114: フォーム反映時のハイライト
   const [highlightField, setHighlightField] = useState<string | null>(null);
+
+  // v3.2.3: 3軸分離検索の有効/無効
+  const [multiAxisEnabled, setMultiAxisEnabled] = useState<boolean>(true);
+
+  // v3.2.4: プロンプト選択機能
+  const [promptName, setPromptName] = useState('デフォルト');
+  const [savedPromptsList, setSavedPromptsList] = useState<any[]>([]);
+  const [customPrompts, setCustomPrompts] = useState<Record<string, string>>({});
+
+  // v3.2.3: 設定ページで保存されたカスタムプロンプトを読み込み
+  useEffect(() => {
+    // 設定から3軸分離検索の設定を読み込む
+    setMultiAxisEnabled(storage.getMultiAxisEnabled() ?? true);
+  }, []);
+
+  // v3.2.4: 保存済みプロンプト一覧をバックエンドから読み込む
+  useEffect(() => {
+    if (!idToken || !currentTeamId) return;
+
+    api.listSavedPrompts(idToken, currentTeamId).then((res) => {
+      if (res.success) {
+        setSavedPromptsList(res.prompts || []);
+      }
+    }).catch(console.error);
+  }, [idToken, currentTeamId]);
+
+  // v3.2.4: プロンプト選択時にカスタムプロンプトをロード
+  useEffect(() => {
+    const loadSelectedPrompt = async () => {
+      // デフォルトの場合はカスタムプロンプトをクリア
+      if (promptName === 'デフォルト') {
+        setCustomPrompts({});
+        return;
+      }
+
+      // 保存済みプロンプトリストに存在するか確認
+      const savedPrompt = savedPromptsList.find(p => p.name === promptName);
+      if (!savedPrompt) {
+        return;
+      }
+
+      try {
+        const result = await api.loadPrompt(savedPrompt.id, idToken, currentTeamId);
+        if (result.success && result.prompt) {
+          const savedPrompts = result.prompt.prompts || {};
+          setCustomPrompts(savedPrompts);
+        }
+      } catch (error) {
+        console.error(`プロンプト「${promptName}」のロードに失敗:`, error);
+      }
+    };
+
+    loadSelectedPrompt();
+  }, [promptName, savedPromptsList, idToken, currentTeamId]);
 
   // FR-114: URLパラメータから検索条件を読み込み
   useEffect(() => {
@@ -91,7 +146,16 @@ function SearchContent() {
         // v3.0.1: ハイブリッド検索
         search_mode: searchMode,
         hybrid_alpha: storage.getHybridAlpha() || undefined,
-        custom_prompts: storage.getCustomPrompts() || undefined,
+        // v3.2.3: 3軸分離検索（UI状態を使用）
+        multi_axis_enabled: multiAxisEnabled,
+        // v3.2.4: プロンプト選択機能（評価ページと同じプロンプトを使用可能）
+        custom_prompts: Object.keys(customPrompts).length > 0 ? customPrompts : undefined,
+        prompt_name: promptName,
+        // v3.2.3: 評価ページと同じパラメータを追加（条件統一）
+        fusion_method: 'rrf',
+        axis_weights: { material: 0.3, method: 0.4, combined: 0.3 },
+        rerank_position: 'after_fusion',
+        rerank_enabled: true,
       }, idToken, currentTeamId);
 
       setResult(response);
@@ -334,6 +398,42 @@ function SearchContent() {
                 />
               </div>
 
+              {/* v3.2.4: プロンプト選択 */}
+              <div>
+                <label className="block text-sm font-medium mb-2">プロンプト</label>
+                <select
+                  className="w-full border border-gray-300 rounded-md p-3 text-sm bg-white"
+                  value={promptName}
+                  onChange={(e) => setPromptName(e.target.value)}
+                >
+                  <option value="デフォルト">デフォルト</option>
+                  {savedPromptsList.map((prompt) => (
+                    <option key={prompt.id} value={prompt.name}>
+                      {prompt.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  評価と同じプロンプトで検索するには、保存済みプロンプトを選択
+                </p>
+              </div>
+
+              {/* v3.2.3: 3軸分離検索 */}
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={multiAxisEnabled}
+                    onChange={(e) => setMultiAxisEnabled(e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-300"
+                  />
+                  <span className="text-sm font-medium">3軸分離検索</span>
+                </label>
+                <span className="text-xs text-gray-500">
+                  {multiAxisEnabled ? '材料・方法・総合の3軸で検索' : '総合軸のみで検索'}
+                </span>
+              </div>
+
               {/* v3.0.1: 検索モード選択 */}
               <div>
                 <label className="block text-sm font-medium mb-2">検索モード</label>
@@ -401,7 +501,7 @@ function SearchContent() {
                 </div>
 
                 {/* 比較分析レポート */}
-                <div className="mb-8 prose max-w-none">
+                <div className="mb-8 prose max-w-none text-sm">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
                     rehypePlugins={[rehypeRaw]}

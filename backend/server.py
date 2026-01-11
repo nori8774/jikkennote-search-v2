@@ -87,6 +87,7 @@ class SearchRequest(BaseModel):
     search_mode: Optional[str] = None  # v3.0.1: "semantic" | "keyword" | "hybrid"
     hybrid_alpha: Optional[float] = None  # v3.0.1: ハイブリッド検索のセマンティック重み（0.0-1.0）
     custom_prompts: Optional[Dict[str, str]] = None
+    prompt_name: Optional[str] = None  # v3.2.4: プロンプト名（ログ表示用）
     evaluation_mode: bool = False  # 評価モード（True: 比較省略、Top10返却）
     # v3.1.0: 3軸分離検索設定
     multi_axis_enabled: Optional[bool] = None  # 3軸検索の有効/無効
@@ -560,6 +561,12 @@ async def search_experiments(req_obj: Request, request: SearchRequest):
         # チームIDを取得（v3.0）
         team_id = getattr(req_obj.state, 'team_id', None)
 
+        # デバッグログ: リクエストパラメータを出力（簡潔版）
+        prompt_display = request.prompt_name or ("カスタム" if request.custom_prompts else "デフォルト")
+        mode_str = "評価" if request.evaluation_mode else "検索"
+        axis_str = "3軸" if request.multi_axis_enabled else "単一"
+        print(f"\n📝 [/search] {mode_str}モード | プロンプト: {prompt_display} | {axis_str}検索 | {request.search_mode or 'semantic'}")
+
         # エージェント初期化（v3.1.0: 3軸分離検索対応）
         agent = SearchAgent(
             openai_api_key=request.openai_api_key,
@@ -609,8 +616,10 @@ async def search_experiments(req_obj: Request, request: SearchRequest):
         )
 
     except Exception as e:
+        import traceback
         error_str = str(e)
         print(f"Error in search: {error_str}")
+        print(f"Stack trace:\n{traceback.format_exc()}")
 
         # OpenAI APIキーエラーを検出
         if "401" in error_str or "invalid_api_key" in error_str or "Incorrect API key" in error_str:
@@ -1036,6 +1045,28 @@ async def get_synonym_groups(request: Request):
     except Exception as e:
         print(f"Error in get_synonym_groups: {str(e)}")
         raise HTTPException(status_code=500, detail=f"同義語辞書取得エラー: {str(e)}")
+
+
+@app.get("/synonyms/export/yaml")
+async def export_synonyms_yaml(request: Request):
+    """同義語辞書をYAMLファイルとしてエクスポート（チーム専用）"""
+    try:
+        team_id = request.headers.get("X-Team-ID")
+        dictionary = get_synonym_dictionary(team_id=team_id)
+
+        yaml_content = dictionary.export_yaml()
+
+        return Response(
+            content=yaml_content,
+            media_type="application/x-yaml",
+            headers={
+                "Content-Disposition": "attachment; filename=synonym_dictionary.yaml"
+            }
+        )
+
+    except Exception as e:
+        print(f"Error in export_synonyms_yaml: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"YAMLエクスポートエラー: {str(e)}")
 
 
 @app.get("/synonyms/{canonical}", response_model=SynonymGroupDetailResponse)
